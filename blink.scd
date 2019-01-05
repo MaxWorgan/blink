@@ -2,17 +2,14 @@
 (
 SynthDef("listen", { | input = 1|
 	var sig, onsets;
-	sig    = SoundIn.ar(input);
-	onsets = Onsets.kr(FFT(LocalBuf(512), sig), 0.05, \rcomplex);
+	sig    = In.ar(input);
+	// sig = In.ar(input);
+	onsets = Onsets.kr(FFT(LocalBuf(512), sig), 0.4, \rcomplex);
 	SendTrig.kr(onsets,input,Timer.kr(onsets));
 }
-).add
-)
-o = Server.local.options;
-o.numOutputBusChannels.postln;
-o.numInputBusChannels = 12;
-o.numOutputBusChannels = 12;
-(
+).add;
+
+
 SynthDef(\bell, {
 	|fs=1, t60=1, pitchy=1, amp=0.25, gate=1, out=0|
 	var sig, exciter;
@@ -31,90 +28,71 @@ SynthDef(\bell, {
 }).add
 )
 
-Synth(\bell, [\fs, 100, \t60, 1.0, \pitchy, 3.0, \out, 0, \amp, 0.07]);
+o = Server.default.options;
+o.numInputBusChannels = 12;
+o.numOutputBusChannels = 12;
 
-// The age of the agent can evolve over lifecycle
-// Synchronisation can lead to longer life - indefinite?
-// Sound can evolve from blips to tonal
-// Do I need a hard reset where everything starts from the beginning?
-
-Server.freeAll
 (
-8.do({arg z; ({
+w = Window("Blink",600@600);
+w.front;
+w.view.decorator = FlowLayout(w.view.bounds);
+w.view.decorator.gap=4@4;
+
+10.do({arg z; ({
 	x = Routine.new({
 		var t = 1.0;
-        var skip = t.rand;
+		var skip = t.rand;
 		var seconds = 0.0;
 		var self = z;
-		var onsets = Synth.tail(s,\listen, [\input, self]);
+		var thresh = 0.3;
+		var amp = 0.2;
+		var oldAmp = amp;
+		var onsets = Synth.tail(s,\listen, [\input, z, \thresh, thresh]);
 		var a = 1.22140275816016983392;
 		var b = 0.08606747492355714203;
-        var inSync = false;
-        var t60 = 0.2;
+		var inSync = false;
+		var t60 = 0.2;
+		var buffer = Buffer.alloc(s,1024,2);
+		
+		{
+			EZSlider(w,400 @ 20, "Thresh-" + z, ControlSpec(0.01,1.0,\lin,0,0.5), {|ez| onsets.set(\thresh, ez.value)});
+			EZSlider(w,400 @ 20, "Amp-" + z, ControlSpec(0.0,1.0,\lin,0,0.5), {|ez| amp = ez.value});
+			c = CheckBox(w,20@20, "mute");
+			c.action_{|x| if(x.value == true){ "muting".postln;oldAmp = amp; amp = 0;}{amp = oldAmp;}};
+		}.defer;
+		
 		o = OSCFunc({ arg msg, time;
-			if(msg[2] == self){
-                ("Got message for " + self).postln;
-                // msg.postln;
+			if(msg[2] == z){
+				{w.view.children[z*3].background = Color.blue;}.defer;
+				AppClock.sched(0.1,{arg time;
+					w.view.children[z*3].background = Color.white;
+				nil;
+				});
 				if(abs(msg[3] - t) > 0.1){
-					skip = min(1.0,a * (SystemClock.seconds - seconds) + b);
-                    // "adjusting: ".post;
-                    // skip.postln;
+					skip = min(1.0,(a * (SystemClock.seconds - seconds) + b));
 				}{
-                    (self + " in sync").postln;
-                    inSync = true;
-                    skip = 0;
-                };
-		}
-	},'/tr', s.addr);
-
+					(self + " in sync").postln;
+					inSync = true;
+					skip = 0;
+				};
+			}
+		},'/tr', s.addr);
+		
 		loop{
 			seconds = SystemClock.seconds;
-            if(inSync){
-                t60 = min(1.0,t60 + 0.1);
-            }{t60 = max(0.1,t60-0.1);};
-            Synth.head(s, \bell, [\fs, 10+(100*self), \t60, t60 , \pitchy, 2.0,  \out,self, \amp, 0.3]);
+			if(inSync){
+				t60 = min(1.0,t60 + 0.1);
+			}{t60 = max(0.1,t60-0.1);};
+			Synth.head(s, \bell, [\fs, 200 + (200 * self), \t60, t60 , \pitchy, 2.0,  \out,self, \amp, amp]);
 			(t-skip).wait;
-            skip = skip * 0.1;
+			skip = skip * 0.1;
 		};
-
+		
 	});
 	x.play
 }.value
 )
-})
+
+});
+
 )
-
-
-// -- overlap texture 2
-(
-SynthDef("help-KlankOverlapTexture2",
-{|out = 0, freqs = #[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], rings = #[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], atk = 5, sus = 8, rel = 5, pan = 0|
-    var e = EnvGen.kr(Env.linen(atk, sus, rel, 1, 4), doneAction:2);
-    var i = BrownNoise.ar(0.0012);
-    var z = Klank.ar(
-        `[freqs, nil, rings],     // specs
-        i                    // input
-    );
-    Out.ar(out, Pan2.ar(z*e, pan));
-}).add;
-
-r = Routine{
-    var sustain = 6, transition = 4, overlap = 5;
-    var period = transition*2+sustain/overlap;
-    0.5.wait;            // wait for the synthdef to be sent to the server
-    inf.do {
-        Synth("help-KlankOverlapTexture2", [
-            \atk, transition,
-            \sus, sustain,
-            \rel, transition,
-            \pan, 1.0.rand2,
-            \freqs, {6000.0.linrand+80}.dup(12),
-            \rings, {0.1.rrand(3)}.dup(12),
-            \out, [8,9]
-        ]);
-        period.wait;
-    }
-};
-r.play;
-)
-r.stop
