@@ -2,7 +2,7 @@
 (
 SynthDef("listen", { | input = 1|
 	var sig, onsets;
-	sig    = In.ar(input);
+	sig    = SoundIn.ar(input);
 	// sig = In.ar(input);
 	onsets = Onsets.kr(FFT(LocalBuf(512), sig), 0.4, \rcomplex);
 	SendTrig.kr(onsets,input,Timer.kr(onsets));
